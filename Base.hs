@@ -2,7 +2,7 @@
 
 -- Author: David Darais
 
-module DerParser
+module DerParser.Base
   ( Context, runContext, CachedParserRef
   , term, termEq
   , (<:~:>), (<:~>), (<~:>), (<~>)
@@ -22,7 +22,7 @@ import Control.Monad.ST.Lazy
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.List
-import SimpleTesting
+import SimpleTesting.Base
 
 -- ID Generator (Monad Transformer)
 newtype IDHandlerT m a =

@@ -1,7 +1,7 @@
 module Main where
 
-import SimpleTesting
-import DerParser
+import SimpleTesting.Base
+import DerParser.Base
 
 main :: IO ()
 main = do
