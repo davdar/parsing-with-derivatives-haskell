@@ -1,4 +1,4 @@
-module Main where
+module DerParser.Test where
 
 import SimpleTesting.Base
 import DerParser.Base
