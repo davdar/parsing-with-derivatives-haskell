@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, GeneralizedNewtypeDeriving, GADTs, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell, RankNTypes, GeneralizedNewtypeDeriving, GADTs, MultiParamTypeClasses, FlexibleInstances #-}
 
 -- Author: David Darais
 
@@ -9,10 +9,9 @@ module DerParser.Base
   , (<:|:>), (<:|>), (<|:>), (<|>)
   , eps, emp, (==>)
   , parse, parseFull
-  , derParserTests
   , dummyRef, link
-  , demo1, demo2, demo3, demo4, demo5
-  , niceFormatDemo
+  -- , demo1, demo2, demo3, demo4, demo5
+  -- , niceFormatDemo
   ) where
 
 import Text.Printf
@@ -22,7 +21,6 @@ import Control.Monad.ST.Lazy
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.List
-import SimpleTesting.Base
 
 -- ID Generator (Monad Transformer)
 newtype IDHandlerT m a =
@@ -118,7 +116,7 @@ newtype CachedParserRef s t a =
 
 -- Helpers for tying knots
 dummyRef :: Context s (CachedParserRef s t a)
-dummyRef = lift $ liftM CachedParserRef $ newSTRef undefined
+dummyRef = lift $ liftM CachedParserRef $ newSTRef (error "access to dummy reference")
 
 link :: CachedParserRef s t a -> CachedParserRef s t a -> Context s ()
 link destination source = writeCachedParserRef destination =<< readCachedParserRefCached source
@@ -399,7 +397,9 @@ derRaw token (Con first second) = do
   if isFirstNullable
     then do
       emptyFirstParses <- parse first []
-      (der token first <~> return second) <|> ((eps [a | (a,_) <- emptyFirstParses]) <~> der token second)
+      der token first <~> return second 
+        <|> 
+        eps [a | (a,_) <- emptyFirstParses] <~> der token second
     else der token first <~> return second
 derRaw token (Alt lhs rhs) = do
   lhsIsEmpty <- isEmpty lhs
@@ -507,112 +507,8 @@ instance (Show a) => ShowRec s (CachedParserRef s t a) where
 -- Test Parsers --
 ------------------
 
-{-
-matchX :: Context s (CachedParserRef s Char Char)
-matchX = termEq 'x'
-
-matchXL :: Context s (CachedParserRef s Char String)
-matchXL = mfix $ \xl -> ((xl <:~> matchX) ==> uncurry (flip (:))) <|> (matchX ==> (:[]))
-
--- Singly recursive things can use fixed point operator.
-matchXLEps :: Context s (CachedParserRef s Char String)
-matchXLEps = mfix $ \xle -> ((xle <:~> matchX) ==> uncurry (flip (:))) <|> eps [""]
-
-matchXConX :: Context s (CachedParserRef s Char (Char, Char))
-matchXConX = termEq 'x' <~> termEq 'x'
-matchXAltY :: Context s (CachedParserRef s Char Char)
-matchXAltY = termEq 'x' <|> termEq 'y'
-
-matchXOrXX :: Context s (CachedParserRef s Char String)
-matchXOrXX = ((termEq 'x') ==> (:[])) <|> ((termEq 'x' <~> termEq 'x') ==> (\(x1,x2) -> x1:x2:[]))
-
-matchXOrXXOrXXX :: Context s (CachedParserRef s Char String)
-matchXOrXXOrXXX =
-      (termEq 'x' ==> (:[]))
-  <|> ((termEq 'x' <~> termEq 'x') ==> (\(x1,x2) -> x1:x2:[]))
-  <|> ((termEq 'x' <~> termEq 'x' <~> termEq 'x') ==> (\((x1,x2),x3) -> x1:x2:x3:[]))
--}
-
--- Doubly recursive things need knot tying through side-effects.
-matchXYL_matchYXL :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
-matchXYL_matchYXL = do
-  xyl' <- dummyRef
-  yxl' <- dummyRef
-
-  xyl'' <- 
-    termEq 'x' <~:> yxl'
-      ==> uncurry (:)
-    <|> 
-    eps [""]
-  yxl'' <- 
-    termEq 'y' <~:> xyl'
-      ==> uncurry (:)
-    <|> 
-    eps [""]
-
-  link xyl' xyl''
-  link yxl' yxl''
-
-  return (xyl', xyl')
-
-matchXYL :: Context s (CachedParserRef s Char String)
-matchXYL = liftM fst matchXYL_matchYXL
 
 {-
-matchYXL :: Context s (CachedParserRef s Char String)
-matchYXL = liftM snd matchXYL_matchYXL
--}
-
--- A grammer for s-expressions
-
-sx_sxList :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
-sx_sxList = do
-  sx' <- dummyRef
-  sxList' <- dummyRef
-
-  sx'' <- 
-    termEq '(' <~> return sxList' <~> termEq ')' 
-      ==> (\('(',(list,')')) -> "(" ++ list ++ ")")
-    <|> 
-    termEq 's' 
-      ==> (:[])
-
-  sxList'' <- 
-    return sx' <~> return sxList'
-      ==> uncurry (++) 
-    <|> 
-    eps [""]
-
-  link sx' sx''
-  link sxList' sxList''
-
-  return (sx', sxList')
-
-sx :: Context s (CachedParserRef s Char String)
-sx = liftM fst sx_sxList
-
-sxList :: Context s (CachedParserRef s Char String)
-sxList = liftM snd sx_sxList
-
--- A classic ambiguous grammar for things like "1+1+1"
-
-addExp :: Context s (CachedParserRef s Char String)
-addExp = mfix $ \addExp' ->
-  termEq '1' ==> (:[])
-  <|> 
-  termEq '1' <~> termEq '+' <~:> addExp'
-    ==> (\('1',('+',e)) -> '{':'1':'+':e ++ "}")
-  <|> 
-  addExp' <:~> termEq '+' <~> termEq '1'
-    ==> (\(e,('+','1')) -> "{" ++ e ++ '+':'1':'}':[])
-  <|> 
-  addExp' <:~> termEq '+' <~:> addExp'
-    ==> (\(e1,('+',e2)) -> "{" ++ e1 ++ "+" ++ e2 ++ "}")
-  <|> 
-  return addExp'
-  <|> 
-  eps [""]
-
 -- Notice this is a pure result. No ST or IO lingering around...
 demo1 :: [(String, String)]
 demo1 = runContext $ matchXYL >>= (\a -> parse a "xyxyxyxyxyxyxy")
@@ -651,6 +547,5 @@ niceFormatDemo =
     , "demo for extremely ambiguous grammar full parse. input '1+1+1+1+1':"
     , concat [show a ++ "\n" | a <- demo5]
     ]
+    -}
 
-derParserTests :: (MonadTestResult m) => m ()
-derParserTests = return ()
