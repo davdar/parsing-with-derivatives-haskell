@@ -9,6 +9,7 @@ module DerParser.Base
   , (<:|:>), (<:|>), (<|:>), (<|>)
   , eps, emp, (==>)
   , parse, parseFull
+  , isEmpty, der
   , dummyRef, link
   -- , demo1, demo2, demo3, demo4, demo5
   -- , niceFormatDemo
@@ -16,18 +17,18 @@ module DerParser.Base
 
 import Text.Printf
 import Control.Monad.State
-import Data.STRef.Lazy
-import Control.Monad.ST.Lazy
+import Data.STRef.Strict
+import Control.Monad.ST.Strict
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.List
 
 -- ID Generator (Monad Transformer)
 newtype IDHandlerT m a =
-  IDHandlerT { unwrapIDHandlerT :: StateT Integer m a }
+  IDHandlerT { unwrapIDHandlerT :: StateT Int m a }
   deriving (Monad, MonadTrans, MonadFix)
 
-nextID :: (Monad m) => IDHandlerT m Integer
+nextID :: (Monad m) => IDHandlerT m Int
 nextID = IDHandlerT $ do
   n <- get
   put $ n + 1
@@ -38,7 +39,7 @@ evalIDT = ($ 0) . evalStateT . unwrapIDHandlerT
 
 -- ChangeCell (Monad Transformer)
 newtype ChangeCellT m a =
-  ChangeCellT { unwrapChangeCellT :: StateT (Bool, [Integer]) m a }
+  ChangeCellT { unwrapChangeCellT :: StateT (Bool, [Int]) m a }
   deriving (Monad, MonadTrans, MonadFix)
 
 flagChanged :: (Monad m) => ChangeCellT m ()
@@ -46,12 +47,12 @@ flagChanged = ChangeCellT $ do
   (_, seen) <- get
   put (True, seen)
 
-flagSeen :: (Monad m) => Integer -> ChangeCellT m ()
+flagSeen :: (Monad m) => Int -> ChangeCellT m ()
 flagSeen ident = ChangeCellT $ do
   (changed, seen) <- get
   put (changed, ident:seen)
 
-hasSeen :: (Monad m) => Integer -> ChangeCellT m Bool
+hasSeen :: (Monad m) => Int -> ChangeCellT m Bool
 hasSeen ident = ChangeCellT $ do
   (_, seen) <- get
   return $ ident `elem` seen
@@ -93,7 +94,7 @@ data Parser s t a where
             -> Parser s t b'
 
 -- IDParser: Wraps around a parser and gives it an ID
-data IDParser s t a = IDParser (Parser s t a) Integer
+data IDParser s t a = IDParser (Parser s t a) Int
 
 idParserParser :: IDParser s t a -> Parser s t a
 idParserParser (IDParser p _) = p
@@ -147,7 +148,9 @@ isNullable ref = do
       liftM cachedParserIsNullable $ readCachedParserRefCached ref
 
 isEmpty :: (Ord a) => CachedParserRef s t a -> Context s Bool
-isEmpty ref = initialize ref >> (liftM cachedParserIsEmpty $ readCachedParserRefCached ref)
+isEmpty ref = do
+  initialize ref 
+  liftM cachedParserIsEmpty $ readCachedParserRefCached ref
 
 parseNull :: (Ord a) => CachedParserRef s t a -> Context s (Set.Set a)
 parseNull ref = do
@@ -201,11 +204,11 @@ setCachedDerivatives ref dToSet = do
 -- Derivative cache manipulation
 getCachedDerivative :: (Ord t) => t -> CachedParserRef s t a -> Context s (Maybe (CachedParserRef s t a))
 getCachedDerivative token parserRef =
-  (return . Map.lookup token) =<< cachedDerivatives parserRef
+  liftM (Map.lookup token) $ cachedDerivatives parserRef
 
 addDerivativeToCache :: (Ord t) => t -> CachedParserRef s t a -> CachedParserRef s t a -> Context s ()
 addDerivativeToCache token valueRefToAdd parserRef =
-  (setCachedDerivatives parserRef . Map.insert token valueRefToAdd) =<< cachedDerivatives parserRef
+  setCachedDerivatives parserRef . Map.insert token valueRefToAdd =<< cachedDerivatives parserRef
 
 -- Initializing
 initialize :: (Ord a) => CachedParserRef s t a -> Context s ()
@@ -221,7 +224,7 @@ updateChildBasedAttributesWhileChanged ref = do
   changed <- execChangeContext $ updateChildBasedAttributes ref
   if changed then updateChildBasedAttributesWhileChanged ref else return ()
 
-ifUnseen :: Integer -> ChangeContext s () -> ChangeContext s ()
+ifUnseen :: Int -> ChangeContext s () -> ChangeContext s ()
 ifUnseen ident ctxt = do
   seen <- hasSeen ident
   if seen == False then ctxt else return ()
@@ -374,20 +377,25 @@ infix 2 ==>
 -- Derivative
 der :: (Ord t, Ord a) => t -> CachedParserRef s t a -> Context s (CachedParserRef s t a)
 der token pCachedRef = do
-  -- try cached
-  maybeCached <- getCachedDerivative token pCachedRef
-  case maybeCached of
-    Just resultRef -> return resultRef
-    Nothing -> do
-      -- set dummy in cache
-      myDer <- dummyRef
-      addDerivativeToCache token myDer pCachedRef
-      -- do derivative of inner parser
-      p <- readCachedParserRef pCachedRef
-      myDer' <- derRaw token p
-      -- link result
-      link myDer myDer'
-      return myDer
+  -- if empty, just return empty
+  pEmpty <- isEmpty pCachedRef
+  if pEmpty
+    then emp
+    else do
+      -- try cached
+      maybeCached <- getCachedDerivative token pCachedRef
+      case maybeCached of
+        Just resultRef -> return resultRef
+        Nothing -> do
+          -- set dummy in cache
+          myDer <- dummyRef
+          addDerivativeToCache token myDer pCachedRef
+          -- do derivative of inner parser
+          p <- readCachedParserRef pCachedRef
+          myDer' <- derRaw token p
+          -- link result
+          link myDer myDer'
+          return myDer
 
 derRaw :: (Ord t, Ord a) => t -> Parser s t a -> Context s (CachedParserRef s t a)
 derRaw token (Terminal t1test) | t1test token = eps $ [token]
@@ -396,19 +404,19 @@ derRaw token (Con first second) = do
   isFirstNullable <- isNullable first
   if isFirstNullable
     then do
-      emptyFirstParses <- parse first []
-      der token first <~> return second 
+      { emptyFirstParses <- parse first []
+      ; der token first <~> return second 
         <|> 
         eps [a | (a,_) <- emptyFirstParses] <~> der token second
+      }
     else der token first <~> return second
 derRaw token (Alt lhs rhs) = do
   lhsIsEmpty <- isEmpty lhs
   rhsIsEmpty <- isEmpty rhs
-  if lhsIsEmpty
-    then der token rhs
-    else if rhsIsEmpty
-      then der token lhs
-      else der token lhs <|> der token rhs
+  case (lhsIsEmpty, rhsIsEmpty) of
+    (True, _) -> der token rhs
+    (_, True) -> der token lhs
+    _         -> der token lhs <|> der token rhs
 derRaw _ Empty = emp
 derRaw _ (Epsilon _) = emp
 derRaw token (Reduction f parser) = der token parser ==> f
@@ -435,7 +443,7 @@ doDerivParse parserRef [] = do
   return [(a,[]) | a <- Set.toList nullParses]
 doDerivParse parserRef (x:xs) = do
   parseFullOnEmpty <- parseFull parserRef []
-  derivParse <- der x parserRef >>= (\a -> parse a xs)
+  derivParse <- der x parserRef >>= flip parse xs
   return $ combineEven derivParse [(a,(x:xs)) | a <- parseFullOnEmpty]
 
 -- Parsing
@@ -470,7 +478,7 @@ combineOdd _ _ = []
 
 -- Helper for displaying
 class ShowRec s a where
-  showRec :: a -> [Integer] -> Int -> Context s String
+  showRec :: a -> [Int] -> Int -> Context s String
 
 instance (Show a) => ShowRec s (Parser s t a) where
   showRec (Terminal _) _ _ = return $ printf "Terminal"
@@ -502,50 +510,3 @@ instance (Show a) => ShowRec s (CachedParserRef s t a) where
       "\n%s(%s init: %s nullable: %s empty: %s parseNull: %s)"
       (concat (replicate depth "    "))
       showP (show i) (show n) (show e) (show pn)
-
-------------------
--- Test Parsers --
-------------------
-
-
-{-
--- Notice this is a pure result. No ST or IO lingering around...
-demo1 :: [(String, String)]
-demo1 = runContext $ matchXYL >>= (\a -> parse a "xyxyxyxyxyxyxy")
-
--- Parsing s-expressions
-demo2 :: [(String, String)]
-demo2 = runContext $ 
-        sx >>= flip parse "(ss(s)(s)((((s))))(s(s)ss(ss)s))"
-
--- Parsing lists of s-expressions
-demo3 :: [(String, String)]
-demo3 = runContext $ 
-        sxList >>= flip parse "((ss)s)(s((ss)))ss(s)()"
-
--- Parsing ambiguous grammar
-demo4 :: [(String, String)]
-demo4 = runContext $ 
-        addExp >>= flip parse "1+1+1+1+1"
-
--- Parsing ambiguous grammar full
-demo5 :: [String]
-demo5 = runContext $ 
-        addExp >>= flip parseFull "1+1+1+1+1"
-
-niceFormatDemo :: String
-niceFormatDemo = 
-  intercalate "\n" 
-    [ "demo for \"xyxyxy...\" as a mutually recursive grammar. input 'xyxyxyxyxyxyxy':"
-    , concat [show a ++ "\n" | a <- demo1]
-    , "demo for s-expression.  also a mutually recursive grammar. input '(ss(s)(s)((((s))))(s(s)ss(ss)s))':"
-    , concat [show a ++ "\n" | a <- demo2]
-    , "demo for s-exprssion list. input '((ss)s)(s((ss)))ss(s)()':"
-    , concat [show a ++ "\n" | a <- demo3]
-    , "demo for extremely ambiguous grammar list. input '1+1+1+1+1':"
-    , concat [show a ++ "\n" | a <- demo4]
-    , "demo for extremely ambiguous grammar full parse. input '1+1+1+1+1':"
-    , concat [show a ++ "\n" | a <- demo5]
-    ]
-    -}
-
