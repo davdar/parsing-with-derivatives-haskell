@@ -1,5 +1,5 @@
 module DerParser.Test 
-  ( main
+  ( module DerParser.Test
   , module DerParser.Tests
   , module DerParser.Base
   ) where
@@ -13,3 +13,22 @@ main = do
   putStr "DerParser Tests: "
   putStr . (uncurry displayTestResults) =<< execTestResultT derParserTests
 
+testStr :: String
+testStr = "ssss"
+
+testPFor :: String -> Context s (CachedParserRef s Char String)
+testPFor s = foldl f init' s
+  where
+    f :: Context s (CachedParserRef s Char String) -> Char -> Context s (CachedParserRef s Char String)
+    f parser c = der c =<< parser
+    init' :: Context s (CachedParserRef s Char String)
+    init' = sxList
+
+showTestPFor :: String -> IO ()
+showTestPFor s = putStrLn $ runContext displayResult
+  where 
+    displayResult :: Context s String
+    displayResult = showBase =<< testPFor s
+
+    showBase :: CachedParserRef s Char String -> Context s String
+    showBase p = showRec p [] 0

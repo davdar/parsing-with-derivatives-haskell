@@ -11,8 +11,7 @@ module DerParser.Base
   , parse, parseFull
   , isEmpty, der
   , dummyRef, link
-  -- , demo1, demo2, demo3, demo4, demo5
-  -- , niceFormatDemo
+  , showRec
   ) where
 
 import Text.Printf
@@ -386,15 +385,22 @@ der token pCachedRef = do
       maybeCached <- getCachedDerivative token pCachedRef
       case maybeCached of
         Just resultRef -> return resultRef
-        Nothing -> do
+        Nothing -> mfix $ \myDer -> do
           -- set dummy in cache
-          myDer <- dummyRef
+          -- myDer <- dummyRef
           addDerivativeToCache token myDer pCachedRef
           -- do derivative of inner parser
           p <- readCachedParserRef pCachedRef
-          myDer' <- derRaw token p
+          myDer <- derRaw token p
           -- link result
-          link myDer myDer'
+          -- link myDer myDer'
+
+          -- myDerEmpty <- isEmpty myDer
+
+          -- if myDerEmpty
+            -- then link myDer =<< emp
+            -- else return ()
+
           return myDer
 
 derRaw :: (Ord t, Ord a) => t -> Parser s t a -> Context s (CachedParserRef s t a)
@@ -404,11 +410,11 @@ derRaw token (Con first second) = do
   isFirstNullable <- isNullable first
   if isFirstNullable
     then do
-      { emptyFirstParses <- parse first []
-      ; der token first <~> return second 
+      emptyFirstParses <- parse first []
+      der token first <~> return second 
         <|> 
         eps [a | (a,_) <- emptyFirstParses] <~> der token second
-      }
+      
     else der token first <~> return second
 derRaw token (Alt lhs rhs) = do
   lhsIsEmpty <- isEmpty lhs
@@ -476,37 +482,67 @@ combineOdd xs (y:ys) = y:combineEven xs ys
 combineOdd (x:xs) ys = x:combineEven xs ys
 combineOdd _ _ = []
 
--- Helper for displaying
-class ShowRec s a where
-  showRec :: a -> [Int] -> Int -> Context s String
+showRec :: (Show a) => CachedParserRef s t a -> [Int] -> Int -> Context s String
+showRec cachedRef seen depth = do
+  (CachedParser idp i n e pn _) <- readCachedParserRefCached cachedRef
 
-instance (Show a) => ShowRec s (Parser s t a) where
-  showRec (Terminal _) _ _ = return $ printf "Terminal"
-  showRec (Con first second) seen depth = do
-    showFirst <- (showRec first seen (depth + 1))
-    showSecond <- (showRec second seen (depth + 1))
-    return $ printf "Con first:%s second:%s" showFirst showSecond
-  showRec (Alt lhs rhs) seen depth = do
-    showLHS <- (showRec lhs seen (depth + 1))
-    showRHS <- (showRec rhs seen (depth + 1))
-    return $ printf "Alt lhs:%s rhs:%s" showLHS showRHS
-  showRec (Epsilon nullMatches) _ _ = return $ printf "Epsilon nullParses:%s" (show nullMatches)
-  showRec Empty _ _ = return $ "Empty"
-  showRec (Reduction _ p) seen depth = do
-    showP <- (showRec p seen (depth + 1))
-    return $ printf "Reduction p:%s" showP
+  let initMsg = printf "[init: %s]" (show i)
+      nullMsg = printf "[nullable: %s]" (show n)
+      emptMsg = printf "[empty: %s]" (show e)
+      pnulMsg = printf "[parseNull: %s]" (show pn)
 
-instance (Show a) => ShowRec s (IDParser s t a) where
-  showRec (IDParser _ g) seen _ | elem g seen = return $ show g
-  showRec (IDParser p g) seen depth | otherwise = do
-    showP <- (showRec p (g:seen) depth)
-    return $ printf "%s\n%sid:%s" showP (concat (replicate (depth + 1) "    ")) (show g)
+      (IDParser p g) = idp
+      idMsg = printf "[id: %s]" (show g)
+      seen' = (g:seen)
 
-instance (Show a) => ShowRec s (CachedParserRef s t a) where
-  showRec cachedRef seen depth = do
-    (CachedParser p i n e pn _) <- readCachedParserRefCached cachedRef
-    showP <- (showRec p seen depth)
-    return $ printf
-      "\n%s(%s init: %s nullable: %s empty: %s parseNull: %s)"
-      (concat (replicate depth "    "))
-      showP (show i) (show n) (show e) (show pn)
+      cachMsg = intercalate " " [idMsg, initMsg, nullMsg, emptMsg, pnulMsg]
+
+      seenResult = printf "(SEEN %s)" idMsg
+
+      depthBuffer = replicate depth ' '
+
+  if g `elem` seen then return seenResult
+    else case p of
+      (Terminal _) -> return $ printf "(Terminal %s)" cachMsg
+      (Con first second) -> do
+        let resultFormat = concat [   "(Con %s\n"
+                                  , "%s first:\n"
+                                  , "%s  %s\n"
+                                  , "%s second:\n"
+                                  , "%s  %s\n"
+                                  ]
+            newDepth     = depth + 2 
+        showFirst <- showRec first seen' newDepth
+        showSecond <- showRec second seen' newDepth
+        return $ printf resultFormat 
+                        cachMsg 
+                        depthBuffer depthBuffer showFirst 
+                        depthBuffer depthBuffer showSecond
+      (Alt lhs rhs) -> do
+        let resultFormat = concat [   "(Alt %s\n"
+                                  , "%s lhs:\n"
+                                  , "%s  %s\n"
+                                  , "%s rhs:\n"
+                                  , "%s  %s"
+                                  ]
+            newDepth     = depth + 2 
+        showLhs <- showRec lhs seen' newDepth
+        showRhs <- showRec rhs seen' newDepth
+        return $ printf resultFormat
+                        cachMsg
+                        depthBuffer depthBuffer showLhs
+                        depthBuffer depthBuffer showRhs
+      (Epsilon nullMatches) -> 
+        return $ printf "(Epsilon %s %s)" (show nullMatches) cachMsg
+      Empty -> return $ printf "(Empty %s)" cachMsg
+      (Reduction _ rp) -> do
+        let resultFormat = concat [   "(Reduction %s\n"
+                                  , "%s p:\n"
+                                  , "%s  %s"
+                                  ]
+            newDepth     = depth + 4
+        showRP <- showRec rp seen' newDepth
+        return $ printf resultFormat
+                        cachMsg
+                        depthBuffer depthBuffer showRP
+
