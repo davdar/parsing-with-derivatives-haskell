@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+
 module DerParser.Test 
   ( module DerParser.Test
   , module DerParser.Tests
@@ -24,11 +26,14 @@ testPFor s = foldl f init' s
     init' :: Context s (CachedParserRef s Char String)
     init' = sxList
 
-showTestPFor :: String -> IO ()
-showTestPFor s = putStrLn $ runContext displayResult
+showTestP :: (forall s. Context s (CachedParserRef s Char String)) -> IO ()
+showTestP prefC = putStrLn $ runContext displayResult
   where 
     displayResult :: Context s String
-    displayResult = showBase =<< testPFor s
+    displayResult = showBase =<< prefC
 
     showBase :: CachedParserRef s Char String -> Context s String
     showBase p = showRec p [] 0
+
+showTestPFor :: String -> IO ()
+showTestPFor s = showTestP $ testPFor s

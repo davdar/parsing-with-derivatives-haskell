@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, RankNTypes #-}
+{-# LANGUAGE RecursiveDo, TemplateHaskell, RankNTypes #-}
 module DerParser.Tests where
 
 import SimpleTesting.Base
@@ -6,14 +6,15 @@ import DerParser.Base
 import Control.Monad.Fix
 import Control.Monad.Trans
 import Control.Monad
+import Control.Applicative((<$>))
 
-testParse :: (Ord a, Ord b)
+testParse :: (Ord a, Ord b, Show b)
           => (forall s. Context s (CachedParserRef s a b))
           -> [a]
           -> [b]
           -> Bool
-testParse parser input expected
-  = foldl (\t exp' -> t && exp' `elem` matches) True expected
+testParse parser input expected =
+  foldl (\t exp' -> t && exp' `elem` matches) True expected
     && (length expected) == (length matches)
   where matches = map fst $ runContext $ parser >>= flip parse input
 
@@ -30,7 +31,7 @@ matchXTests = do
 -- Match a list of one or more 'x'
 matchXL :: Context s (CachedParserRef s Char String)
 matchXL = mfix $ \xl -> 
-  xl <:~> matchX ==> uncurry (flip (:)) <|> matchX ==> (:[])
+  xl ~> matchX ==> uncurry (flip (:)) <|> matchX ==> (:[])
 
 matchXLTests :: (MonadTestResult m, MonadIO m) => m ()
 matchXLTests = do 
@@ -40,7 +41,7 @@ matchXLTests = do
 -- Match a list of zero or more 'x'
 matchXLEps :: Context s (CachedParserRef s Char String)
 matchXLEps = mfix $ \xle -> 
-  xle <:~> matchX ==> uncurry (flip (:)) <|> eps [""]
+  xle ~> matchX ==> uncurry (flip (:)) <|> eps [""]
 
 matchXLEpsTests :: (MonadTestResult m, MonadIO m) => m ()
 matchXLEpsTests = do 
@@ -49,31 +50,26 @@ matchXLEpsTests = do
 
 -- Match a list of zero or more with pattern 'xyxy...' or 'yxyx...'
 matchXYL_matchYXL :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
-matchXYL_matchYXL = do
-  xyl' <- dummyRef
-  yxl' <- dummyRef
-
-  xyl'' <- 
-    termEq 'x' <~:> yxl'
-      ==> uncurry (:)
-    <|> 
-    eps [""]
-  yxl'' <- 
-    termEq 'y' <~:> xyl'
+matchXYL_matchYXL = mdo
+  xyl <- 
+    termEq 'x' <~ yxl
       ==> uncurry (:)
     <|> 
     eps [""]
 
-  link xyl' xyl''
-  link yxl' yxl''
+  yxl <- 
+    termEq 'y' <~ xyl
+      ==> uncurry (:)
+    <|> 
+    eps [""]
 
-  return (xyl', yxl')
+  return (xyl, yxl)
 
 matchXYL :: Context s (CachedParserRef s Char String)
-matchXYL = liftM fst matchXYL_matchYXL
+matchXYL = fst <$> matchXYL_matchYXL
 
 matchYXL :: Context s (CachedParserRef s Char String)
-matchYXL = liftM snd matchXYL_matchYXL
+matchYXL = snd <$> matchXYL_matchYXL
 
 matchXYL_matchYXLTests :: (MonadTestResult m, MonadIO m) => m ()
 matchXYL_matchYXLTests = do 
@@ -87,33 +83,25 @@ matchXYL_matchYXLTests = do
 
 -- A grammer for s-expressions
 sx_sxList :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
-sx_sxList = do
-  sx' <- dummyRef
-  sxList' <- dummyRef
-
-  sx'' <- 
-    termEq '(' <~> return sxList' <~> termEq ')' 
-      ==> (\('(',(list,')')) -> "(" ++ list ++ ")")
+sx_sxList = mdo
+  sx <- 
+    termEq '(' <~ sxList <~> termEq ')' 
+      ==> uncurry2 (\'(' list ')' -> "(" ++ list ++ ")")
     <|> 
     termEq 's' 
       ==> (:[])
 
-  sxList'' <- 
-    return sx' <~> return sxList'
-      ==> uncurry (++) 
-    <|> 
-    eps [""]
+  sxList <- rep sx [] (\s ss -> s ++ ss)
 
-  link sx' sx''
-  link sxList' sxList''
+  return (sx, sxList)
 
-  return (sx', sxList')
+  where uncurry2 = uncurry . uncurry
 
 sx :: Context s (CachedParserRef s Char String)
-sx = liftM fst sx_sxList
+sx = fst <$> sx_sxList
 
 sxList :: Context s (CachedParserRef s Char String)
-sxList = liftM snd sx_sxList
+sxList = snd <$> sx_sxList
 
 sx_sxListTests :: (MonadTestResult m, MonadIO m) => m ()
 sx_sxListTests = do 
@@ -124,21 +112,23 @@ sx_sxListTests = do
 
 -- A nasty ambiguous grammar for things like "1+1+1"
 addExp :: Context s (CachedParserRef s Char String)
-addExp = do 
-  addExp' <- dummyRef
-  addExp'' <- 
+addExp = mdo 
+  addExp <- 
     termEq '1' ==> (:[])
     <|> 
-    termEq '1' <~> termEq '+' <~:> addExp'
-      ==> (\('1',('+',e)) -> '{':'1':'+':e ++ "}")
+    termEq '1' <~> termEq '+' <~ addExp
+      ==> uncurry2 (\'1' '+' e -> '{':'1':'+':e ++ "}")
     <|> 
-    addExp' <:~> termEq '+' <~> termEq '1'
-      ==> (\(e,('+','1')) -> "{" ++ e ++ '+':'1':'}':[])
+    addExp ~> termEq '+' <~> termEq '1'
+      ==> uncurry2 (\e '+' '1' -> "{" ++ e ++ '+':'1':'}':[])
     <|> 
-    addExp' <:~> termEq '+' <~:> addExp'
-      ==> (\(e1,('+',e2)) -> "{" ++ e1 ++ "+" ++ e2 ++ "}")
-  link addExp' addExp''
-  return addExp'
+    addExp ~> termEq '+' <~ addExp
+      ==> uncurry2 (\e1 '+' e2 -> "{" ++ e1 ++ "+" ++ e2 ++ "}")
+    <| addExp
+    <| addExp
+  return addExp
+
+  where uncurry2 = uncurry . uncurry
 
 addExpTests :: (MonadTestResult m, MonadIO m) => m ()
 addExpTests = do 
@@ -147,18 +137,23 @@ addExpTests = do
                                              , "{1+{1+1}}"
                                              , "{{1+1}+1}" 
                                              ] |])
+  $(performTest' [| testParse addExp "x" [] |])
 
-isEmptyTests :: (MonadTestResult m, MonadIO m) => m ()
-isEmptyTests = do
-  $(performTest' [|
-    runContext $ do
-      addExpP <- addExp
-      derX <- der 'x' addExpP
-      derXX <- der 'x' derX
-      isEmpty derXX
-      -- derXXX <- der 'x' derXX
-      -- liftM2 (&&) (isEmpty derX) (isEmpty derXXX)
-    |]) 
+repFoo :: Context s (CachedParserRef s Char String)
+repFoo = mdo
+  foo <- 
+    termEq 'f' <~> termEq 'o' <~> termEq 'o'
+      ==> uncurry2 (\f o1 o2 -> f:o1:o2:[])
+  repFoo' <- rep foo [] (\x1 x2 -> x1 ++ x2)
+  return repFoo'
+
+  where uncurry2 = uncurry . uncurry
+
+repFooTests :: (MonadTestResult m, MonadIO m) => m ()
+repFooTests = do
+  $(performTest' [| testParse repFoo "foofoo" ["", "foo", "foofoo"] |])
+  $(performTest' [| testParse repFoo "foobar" ["", "foo" ] |])
+
 derParserTests :: (MonadTestResult m, MonadIO m) => m ()
 derParserTests = do 
   matchXTests
@@ -167,4 +162,4 @@ derParserTests = do
   matchXYL_matchYXLTests
   sx_sxListTests
   addExpTests
-  -- isEmptyTests
+  repFooTests
