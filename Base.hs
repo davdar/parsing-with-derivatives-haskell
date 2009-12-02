@@ -100,14 +100,16 @@ data Parser s t a where
   Empty      :: Parser s t a
 
   Reduction  :: (Ord a', Show a')
-             => (a' -> b')
-             -> CachedParserRef s t a'
+             => CachedParserRef s t a'
+             -> (a' -> b')
+             -> Int
              -> Parser s t b'
 
   Repetition :: (Show a, Ord a)
              => CachedParserRef s t a
              -> b
              -> (a -> b -> b)
+             -> Int
              -> Parser s t b
 
 -- IDParser: Wraps around a parser and gives it an ID
@@ -148,8 +150,8 @@ parserChildrenDo (Epsilon _) _ = return ()
 parserChildrenDo Empty _ = return ()
 parserChildrenDo (Con first second) f = f first >> f second
 parserChildrenDo (Alt lhs rhs) f = f lhs >> f rhs
-parserChildrenDo (Reduction _ p) f = f p
-parserChildrenDo (Repetition p _ _) f = f p
+parserChildrenDo (Reduction p _ _) f = f p
+parserChildrenDo (Repetition p _ _ _) f = f p
 
 -- Direct reading and writing reference
 writeCachedParserRef :: CachedParserRef s t a -> CachedParser s t a -> Context s ()
@@ -178,19 +180,13 @@ isEmpty ref = do
 
 isNullable :: (Ord a) => CachedParserRef s t a -> Context s Bool
 isNullable ref = do
-  empty' <- isEmpty ref
-  if empty' then return False
-    else do
-      initialize ref
-      cachedParserIsNullable <$> readCachedParserRefCached ref
+  initialize ref
+  cachedParserIsNullable <$> readCachedParserRefCached ref
 
 parseNull :: (Ord a) => CachedParserRef s t a -> Context s (Set.Set a)
 parseNull ref = do
-  empty' <- isEmpty ref
-  if empty' then return Set.empty
-    else do
-      initialize ref
-      cachedParserParseNull <$> readCachedParserRefCached ref
+  initialize ref
+  cachedParserParseNull <$> readCachedParserRefCached ref
 
 -- Reference mutators
 setInitialized :: CachedParserRef s t a -> Bool -> Context s ()
@@ -282,7 +278,7 @@ updateChildBasedAttributes ref = do
     updateCBA' :: (Ord a) => Parser s t a -> CachedParserRef s t a -> ChangeContext s ()
     updateCBA' (Terminal _) _ = return ()
     updateCBA' Empty _ = return ()
-    updateCBA' (Repetition _ _ _) _ = return ()
+    updateCBA' (Repetition _ _ _ _) _ = return ()
 
     updateCBA' (Epsilon nullMatches) ref' = do
       let parseNullToSet = Set.fromList nullMatches
@@ -314,7 +310,7 @@ updateChildBasedAttributes ref = do
                                                            <*> isNullable rhs)
       setNullableWithChange ref' nullableToSet
 
-    updateCBA' (Reduction f p) ref' = do
+    updateCBA' (Reduction p f _) ref' = do
       parseNullToSet <- lift $ Set.map f <$> parseNull p
       setParseNullWithChange ref' parseNullToSet
       emptyToSet <- lift $ isEmpty p
@@ -336,8 +332,8 @@ initialOf idp = case idParserParser idp of
   (Alt _ _) -> base
   (Epsilon _) -> base { cachedParserIsNullable = True }
   Empty -> base { cachedParserIsEmpty = True }
-  (Reduction _ _) -> base
-  (Repetition _ init' _) ->
+  (Reduction _ _ _) -> base
+  (Repetition _ init' _ _) ->
     base 
     { cachedParserParseNull  = Set.singleton init'
     , cachedParserIsNullable = True
@@ -403,15 +399,23 @@ eps :: [a] -> Context s (CachedParserRef s t a)
 eps = mkCached . Epsilon
 emp :: Context s (CachedParserRef s t a)
 emp = mkCached Empty
+(==>|) :: (Show a, Ord a)
+       => Context s (CachedParserRef s t a)
+       -> (a -> b)
+       -> Int
+       -> Context s (CachedParserRef s t b)
+(==>|) pm f fid =
+  mkCached =<< return Reduction <*> pm <*> return f <*> return fid
 (==>) :: (Show a, Ord a)
       => Context s (CachedParserRef s t a)
       -> (a -> b)
       -> Context s (CachedParserRef s t b)
-(==>) pm f = mkCached . Reduction f =<< pm
-rep :: (Show a, Ord a) => CachedParserRef s t a -> b -> (a -> b -> b) -> Context s (CachedParserRef s t b)
-rep p init' tallyf = mkCached $ Repetition p init' tallyf
+(==>) pm f = (==>|) pm f =<< nextID
 
-infix 2 ==>
+rep :: (Show a, Ord a) => CachedParserRef s t a -> b -> (a -> b -> b) -> Context s (CachedParserRef s t b)
+rep p init' tallyf = mkCached =<< return . Repetition p init' tallyf =<< nextID
+
+infix 2 ==>, ==>|
 
 -- Weeding is intended to keep the data structure size of a parser small after
 -- computing a derivative.
@@ -498,9 +502,9 @@ derRaw token (Alt lhs rhs) _ = do
     _         -> derInner token lhs <|> derInner token rhs
 derRaw _ Empty _ = emp
 derRaw _ (Epsilon _) _ = emp
-derRaw token (Reduction f parser) _ = derInner token parser ==> f
-derRaw token (Repetition parser _ tallyf') ref =
-  der token parser <~ ref ==> uncurry tallyf'
+derRaw token (Reduction parser f fid) _ = derInner token parser ==>| f $ fid
+derRaw token (Repetition parser _ tallyf' fid) ref =
+  der token parser <~ ref ==>| uncurry tallyf' $ fid
 
 -- Parsing
 parse :: (Ord t, Ord a, Show a) => CachedParserRef s t a -> [t] -> Context s [(a, [t])]
@@ -515,10 +519,10 @@ parse parserRef input = do
     (Alt _ _) -> doDerivParse parserRef input
     (Epsilon nullMatches) -> return [(a, input) | a <- nullMatches]
     Empty -> return []
-    (Reduction f p) -> do
+    (Reduction p f _) -> do
       innerParse <- parse p input
       return [(f a, rest) | (a, rest) <- innerParse]
-    (Repetition _ _ _) -> doDerivParse parserRef input
+    (Repetition p init' f fid) -> doDerivParse parserRef input -- do a fixed point thing here
 
 doDerivParse :: (Ord a, Ord t, Show a) => CachedParserRef s t a -> [t] -> Context s [(a, [t])]
 doDerivParse parserRef [] = do
@@ -539,10 +543,10 @@ parseFull parserRef input = do
     (Alt _ _) -> doDerivParseFull parserRef input
     (Epsilon _) -> doDerivParseFull parserRef input
     Empty -> doDerivParseFull parserRef input
-    (Reduction f p) -> do
+    (Reduction p f _) -> do
       innerParseFull <- parseFull p input
       return [f a | a <- innerParseFull]
-    (Repetition _ _ _) -> doDerivParseFull parserRef input
+    (Repetition _ _ _ _) -> doDerivParseFull parserRef input
 
 doDerivParseFull :: (Ord a, Ord t, Show a) => CachedParserRef s t a -> [t] -> Context s [a]
 doDerivParseFull parserRef [] = liftM Set.toList $ parseNull parserRef
@@ -613,21 +617,21 @@ showRec cachedRef seen depth = do
       (Epsilon nullMatches) -> 
         return $ printf "(Epsilon %s %s)" (show nullMatches) cachMsg
       Empty -> return $ printf "(Empty %s)" cachMsg
-      (Reduction _ rp) -> do
-        let resultFormat = concat [   "(Reduction %s\n"
+      (Reduction rp _ fid) -> do
+        let resultFormat = concat [   "(Reduction %s [fid: %s]\n"
                                   , "%s p:\n"
                                   , "%s  %s"
                                   ]
         showRP <- showRec rp seen' nextDepth
         return $ printf resultFormat
-                        cachMsg
+                        cachMsg (show fid)
                         depthBuffer depthBuffer showRP
-      (Repetition rp _ _) -> do
-        let resultFormat = concat [   "(Repetion %s\n"
+      (Repetition rp _ _ fid) -> do
+        let resultFormat = concat [   "(Repetion %s [fid: %s]\n"
                                   , "%s p:\n"
                                   , "%s  %s"
                                   ]
         showRP <- showRec rp seen' nextDepth
         return $ printf resultFormat
-                        cachMsg
+                        cachMsg (show fid)
                         depthBuffer depthBuffer showRP

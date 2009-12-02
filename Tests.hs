@@ -16,7 +16,8 @@ testParse :: (Ord a, Ord b, Show b)
 testParse parser input expected =
   foldl (\t exp' -> t && exp' `elem` matches) True expected
     && (length expected) == (length matches)
-  where matches = map fst $ runContext $ parser >>= flip parse input
+  where
+    matches = map fst $ runContext $ parser >>= flip parse input
 
 -- Match single 'x' 
 matchX :: Context s (CachedParserRef s Char Char)
