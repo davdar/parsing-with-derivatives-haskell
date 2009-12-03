@@ -9,31 +9,44 @@ module DerParser.Test
 import SimpleTesting.Base
 import DerParser.Tests
 import DerParser.Base
+import System.IO.Unsafe
+import Control.Applicative
 
 main :: IO ()
 main = do
   putStr "DerParser Tests: "
   putStr . (uncurry displayTestResults) =<< execTestResultT derParserTests
 
-testStr :: String
-testStr = "ssss"
-
-testPFor :: String -> Context s (CachedParserRef s Char String)
+testPFor :: String -> Context (CachedParserRef Char String)
 testPFor s = foldl f init' s
   where
-    f :: Context s (CachedParserRef s Char String) -> Char -> Context s (CachedParserRef s Char String)
+    f :: Context (CachedParserRef Char String) -> Char -> Context (CachedParserRef Char String)
     f parser c = der c =<< parser
-    init' :: Context s (CachedParserRef s Char String)
+    init' :: Context (CachedParserRef Char String)
     init' = sxList
 
-showTestP :: (forall s. Context s (CachedParserRef s Char String)) -> IO ()
-showTestP prefC = putStrLn $ runContext displayResult
+showTestP :: Context (CachedParserRef Char String) -> IO ()
+showTestP prefC = putStrLn $ unsafePerformIO $ runContext displayResult
   where 
-    displayResult :: Context s String
+    displayResult :: Context String
     displayResult = showBase =<< prefC
 
-    showBase :: CachedParserRef s Char String -> Context s String
+    showBase :: CachedParserRef Char String -> Context String
     showBase p = showRec p [] 0
 
 showTestPFor :: String -> IO ()
-showTestPFor s = showTestP $ testPFor s
+showTestPFor = showTestP . testPFor
+
+parsePFor :: String -> Context [(String, [Char])]
+parsePFor s = flip parse s =<< sxList
+
+showParseP :: Context [(String, [Char])] -> IO ()
+showParseP pResult = putStrLn $ unsafePerformIO $ runContext $ show <$> pResult
+
+showParsePFor :: String -> IO ()
+showParsePFor = showParseP . parsePFor
+
+sizePFor :: String -> IO ()
+sizePFor s = putStrLn . show . unsafePerformIO . runContext $ flip parserSize [] =<< derived
+  where
+    derived = testPFor s

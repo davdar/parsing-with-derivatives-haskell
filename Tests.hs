@@ -1,4 +1,4 @@
-{-# LANGUAGE RecursiveDo, TemplateHaskell, RankNTypes #-}
+{-# LANGUAGE RecursiveDo, TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
 module DerParser.Tests where
 
 import SimpleTesting.Base
@@ -7,9 +7,11 @@ import Control.Monad.Fix
 import Control.Monad.Trans
 import Control.Monad
 import Control.Applicative((<$>))
+import System.IO.Unsafe
+import Data.Typeable
 
-testParse :: (Ord a, Ord b, Show b)
-          => (forall s. Context s (CachedParserRef s a b))
+testParse :: (Ord a, Typeable a, Show b, Ord b, Typeable b)
+          => Context (CachedParserRef a b)
           -> [a]
           -> [b]
           -> Bool
@@ -17,10 +19,10 @@ testParse parser input expected =
   foldl (\t exp' -> t && exp' `elem` matches) True expected
     && (length expected) == (length matches)
   where
-    matches = map fst $ runContext $ parser >>= flip parse input
+    matches = map fst $ unsafePerformIO $ runContext $ parser >>= flip parse input
 
 -- Match single 'x' 
-matchX :: Context s (CachedParserRef s Char Char)
+matchX :: Context (CachedParserRef Char Char)
 matchX = termEq 'x'
 
 matchXTests :: (MonadTestResult m, MonadIO m) => m ()
@@ -30,7 +32,7 @@ matchXTests = do
     |])
 
 -- Match a list of one or more 'x'
-matchXL :: Context s (CachedParserRef s Char String)
+matchXL :: Context (CachedParserRef Char String)
 matchXL = mfix $ \xl -> 
   xl ~> matchX ==> uncurry (flip (:)) <|> matchX ==> (:[])
 
@@ -40,7 +42,7 @@ matchXLTests = do
   $(performTest' [| testParse matchXL "" [] |])
 
 -- Match a list of zero or more 'x'
-matchXLEps :: Context s (CachedParserRef s Char String)
+matchXLEps :: Context (CachedParserRef Char String)
 matchXLEps = mfix $ \xle -> 
   xle ~> matchX ==> uncurry (flip (:)) <|> eps [""]
 
@@ -50,7 +52,7 @@ matchXLEpsTests = do
   $(performTest' [| testParse matchXLEps "" [""] |])
 
 -- Match a list of zero or more with pattern 'xyxy...' or 'yxyx...'
-matchXYL_matchYXL :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
+matchXYL_matchYXL :: Context (CachedParserRef Char String, CachedParserRef Char String)
 matchXYL_matchYXL = mdo
   xyl <- 
     termEq 'x' <~ yxl
@@ -66,10 +68,10 @@ matchXYL_matchYXL = mdo
 
   return (xyl, yxl)
 
-matchXYL :: Context s (CachedParserRef s Char String)
+matchXYL :: Context (CachedParserRef Char String)
 matchXYL = fst <$> matchXYL_matchYXL
 
-matchYXL :: Context s (CachedParserRef s Char String)
+matchYXL :: Context (CachedParserRef Char String)
 matchYXL = snd <$> matchXYL_matchYXL
 
 matchXYL_matchYXLTests :: (MonadTestResult m, MonadIO m) => m ()
@@ -83,25 +85,30 @@ matchXYL_matchYXLTests = do
   $(performTest' [| testParse matchYXL "" [""] |])
 
 -- A grammer for s-expressions
-sx_sxList :: Context s (CachedParserRef s Char String, CachedParserRef s Char String)
+sx_sxList :: Context (CachedParserRef Char String, CachedParserRef Char String)
 sx_sxList = mdo
-  sx <- 
-    termEq '(' <~ sxList <~> termEq ')' 
+  sx' <- 
+    termEq '(' <~ sxList' <~> termEq ')' 
       ==> uncurry2 (\'(' list ')' -> "(" ++ list ++ ")")
     <|> 
     termEq 's' 
       ==> (:[])
 
-  sxList <- rep sx [] (\s ss -> s ++ ss)
+  sxStar <- rep sx' [] (\s1 s2 -> s1 ++ s2)
+  -- sxConsList <- sx' .~ sxStar <~> termEq '.' <~ sx' ==> uncurry3 (\s1 s2 '.' s3 -> s1 ++ s2 ++ s3)
+  -- sxList' <- sxStar .| sxConsList
+  sxList' <- return sxStar
 
-  return (sx, sxList)
+  return (sx', sxList')
 
-  where uncurry2 = uncurry . uncurry
+  where
+    uncurry2 = uncurry . uncurry
+    uncurry3 = uncurry . uncurry2
 
-sx :: Context s (CachedParserRef s Char String)
+sx :: Context (CachedParserRef Char String)
 sx = fst <$> sx_sxList
 
-sxList :: Context s (CachedParserRef s Char String)
+sxList :: Context (CachedParserRef Char String)
 sxList = snd <$> sx_sxList
 
 sx_sxListTests :: (MonadTestResult m, MonadIO m) => m ()
@@ -112,7 +119,7 @@ sx_sxListTests = do
   $(performTest' [| testParse sxList "s(s)()" ["", "s", "s(s)", "s(s)()"] |])
 
 -- A nasty ambiguous grammar for things like "1+1+1"
-addExp :: Context s (CachedParserRef s Char String)
+addExp :: Context (CachedParserRef Char String)
 addExp = mdo 
   addExp <- 
     termEq '1' ==> (:[])
@@ -140,7 +147,7 @@ addExpTests = do
                                              ] |])
   $(performTest' [| testParse addExp "x" [] |])
 
-repFoo :: Context s (CachedParserRef s Char String)
+repFoo :: Context (CachedParserRef Char String)
 repFoo = mdo
   foo <- 
     termEq 'f' <~> termEq 'o' <~> termEq 'o'
