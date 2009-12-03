@@ -95,9 +95,18 @@ sx_sxList = mdo
       ==> (:[])
 
   sxStar <- rep sx' [] (\s1 s2 -> s1 ++ s2)
+  -- FAST (linear for depth)
+  sxList' <- return sxStar
+  
+  -- SLOW (exponential for depth)
   -- sxConsList <- sx' .~ sxStar <~> termEq '.' <~ sx' ==> uncurry3 (\s1 s2 '.' s3 -> s1 ++ s2 ++ s3)
   -- sxList' <- sxStar .| sxConsList
-  sxList' <- return sxStar
+
+  -- ALSO FAST (linear for depth)
+  -- sxList' <- 
+  --   eps [""]
+  --   <|> 
+  --   sx'.~ sxStar <~> (termEq '.' <~ sx' ==> uncurry (\ '.' s -> s) <|> eps [""]) ==> uncurry2 (\ s1 s2 s3 -> s1 ++ s2 ++ s3)
 
   return (sx', sxList')
 
