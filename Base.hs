@@ -10,7 +10,6 @@ module DerParser.Base
   , eps, emp, (==>), rep
   , parse, parseFull
   , isEmpty, der, derInner
-  , dummyRef, link
   , showRec
   , weed
   , parserSize
@@ -83,33 +82,47 @@ execChangeContext = execChangeCellT
 -- Typing relies heavily on GADTs.
 --
 data Parser t a where
-  Terminal   :: (t -> Bool) -> Parser t t
+  Terminal
+    :: (t -> Bool) -> Parser t t
 
-  Con        :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
-             => CachedParserRef t a
-             -> CachedParserRef t b
-             -> Parser t (a, b)
+  Con
+    :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
+    => CachedParserRef t a
+    -> CachedParserRef t b
+    -> Parser t (a, b)
 
-  Alt        :: CachedParserRef t a
-             -> CachedParserRef t a
-             -> Parser t a
+  Alt
+    :: CachedParserRef t a
+    -> CachedParserRef t a
+    -> Parser t a
 
-  Epsilon    :: [a] -> Parser t a
+  Epsilon
+    :: [a] -> Parser t a
 
-  Empty      :: Parser t a
+  Empty
+    :: Parser t a
 
-  Reduction  :: (Show a, Ord a, Typeable a)
-             => CachedParserRef t a
-             -> (a -> b)
-             -> Int
-             -> Parser t b
+  Reduction
+    :: (Show a, Ord a, Typeable a)
+    => CachedParserRef t a
+    -> (a -> b)
+    -> Int
+    -> Parser t b
 
-  Repetition :: CachedParserRef t a
-             -> a
-             -> (a -> a -> a)
-             -> Int
-             -> [[a]]
-             -> Parser t a
+  Repetition
+    :: CachedParserRef t a
+    -- initial
+    -> a
+    -- reduction function
+    -> (a -> a -> a)
+    -- function id
+    -> Int
+    -- progress
+    -> [[a]]
+    -- `clean' version (no progress)
+    -> CachedParserRef t a
+    -> Parser t a
+
   deriving (Typeable)
 
 -- IDParser: Wraps around a parser and gives it an ID
@@ -121,12 +134,18 @@ idParserParser (IDParser p _) = p
 -- CachedParser: Wraps around an IDParser and caches things.
 data CachedParser t a =
   CachedParser
-  { cachedParserIDParser          :: (IDParser t a)
-  , cachedParserIsInit            :: Bool
-  , cachedParserIsNullable        :: Bool
-  , cachedParserIsEmpty           :: Bool
-  , cachedParserParseNull         :: Set.Set a
-  , cachedParserCachedDerivatives :: Map.Map t (CachedParserRef t a)
+  { cachedParserIDParser
+      :: (IDParser t a)
+  , cachedParserIsInit
+      :: Bool
+  , cachedParserIsNullable
+      :: Bool
+  , cachedParserIsEmpty
+      :: Bool
+  , cachedParserParseNull
+      :: Set.Set a
+  , cachedParserCachedDerivatives
+      :: Map.Map t (CachedParserRef t a)
   }
 
 -- CachedParserRef: A wrapper around a reference to a CachedParser.  This
@@ -136,25 +155,22 @@ newtype CachedParserRef t a =
   { getCachedRef :: IORef (CachedParser t a) }
   deriving (Eq, Typeable)
 
--- Helpers for tying knots (currently unused thanks to RecursiveDo)
-dummyRef :: Context (CachedParserRef t a)
-dummyRef = lift $ CachedParserRef <$> newIORef (error "access to dummy reference")
-
-link :: CachedParserRef t a -> CachedParserRef t a -> Context ()
-link destination source = writeCachedParserRef destination =<< readCachedParserRefCached source
-
 -- Recursive Operations on parser children
-parserChildrenDo :: (Monad m, Ord a, Typeable a) 
-                 => Parser t a 
-                 -> (forall b. (Ord b, Typeable b) => (CachedParserRef t b -> m ())) 
-                 -> m ()
+parserChildrenDo
+  :: (Monad m, Ord a, Typeable a) 
+  => Parser t a 
+  -> ( forall b. (Ord b, Typeable b)
+              => CachedParserRef t b 
+              -> m ()
+     )
+  -> m ()
 parserChildrenDo (Terminal _) _ = return ()
 parserChildrenDo (Epsilon _) _ = return ()
 parserChildrenDo Empty _ = return ()
 parserChildrenDo (Con first second) f = f first >> f second
 parserChildrenDo (Alt lhs rhs) f = f lhs >> f rhs
 parserChildrenDo (Reduction p _ _) f = f p
-parserChildrenDo (Repetition p _ _ _ _) f = f p
+parserChildrenDo (Repetition p _ _ _ _ _) f = f p
 
 -- Direct reading and writing reference
 writeCachedParserRef :: CachedParserRef t a -> CachedParser t a -> Context ()
@@ -224,8 +240,11 @@ setEmptyWithChange ref eToSet = do
       flagChanged
     else return ()
 
-setParseNullWithChange :: (Eq a) 
-                       => CachedParserRef t a -> Set.Set a -> ChangeContext ()
+setParseNullWithChange
+  :: (Eq a) 
+  => CachedParserRef t a
+  -> Set.Set a
+  -> ChangeContext ()
 setParseNullWithChange ref pnToSet = do
   cp <- lift $ readCachedParserRefCached ref
   if cachedParserParseNull cp /= pnToSet
@@ -235,26 +254,29 @@ setParseNullWithChange ref pnToSet = do
     else return ()
 
 -- Derivative cache manipulation
-getCachedDerivative :: (Ord t) 
-                    => t 
-                    -> CachedParserRef t a 
-                    -> Context (Maybe (CachedParserRef t a))
+getCachedDerivative
+  :: (Ord t) 
+  => t 
+  -> CachedParserRef t a 
+  -> Context (Maybe (CachedParserRef t a))
 getCachedDerivative token parserRef = Map.lookup token <$> cachedDerivatives parserRef
 
-addDerivativeToCache :: (Ord t) 
-                     => t 
-                     -> CachedParserRef t a 
-                     -> CachedParserRef t a 
-                     -> Context ()
+addDerivativeToCache
+  :: (Ord t) 
+  => t 
+  -> CachedParserRef t a 
+  -> CachedParserRef t a 
+  -> Context ()
 addDerivativeToCache token valueRefToAdd parserRef =
   setCachedDerivatives parserRef =<< updated
   where
     updated = Map.insert token valueRefToAdd <$> cachedDerivatives parserRef
 
 -- Initializing
-initialize :: (Ord a, Typeable a) 
-           => CachedParserRef t a 
-           -> Context ()
+initialize
+  :: (Ord a, Typeable a) 
+  => CachedParserRef t a 
+  -> Context ()
 initialize ref = do
   myInit <- isInit ref
   if myInit then return ()
@@ -262,9 +284,10 @@ initialize ref = do
       setInitialized ref True
       updateChildBasedAttributesWhileChanged ref
 
-updateChildBasedAttributesWhileChanged :: (Ord a, Typeable a) 
-                                       => CachedParserRef t a 
-                                       -> Context ()
+updateChildBasedAttributesWhileChanged
+  :: (Ord a, Typeable a) 
+  => CachedParserRef t a 
+  -> Context ()
 updateChildBasedAttributesWhileChanged ref = do
   changed <- execChangeContext $ updateChildBasedAttributes ref
   if changed then updateChildBasedAttributesWhileChanged ref else return ()
@@ -293,7 +316,7 @@ updateChildBasedAttributes ref = do
     updateCBA' :: Parser t a -> ChangeContext ()
     updateCBA' (Terminal _) = return ()
     updateCBA' Empty = return ()
-    updateCBA' (Repetition _ _ _ _ _) = return ()
+    updateCBA' (Repetition _ _ _ _ _ _) = return ()
 
     updateCBA' (Epsilon nullMatches) = do
       let parseNullToSet = Set.fromList nullMatches
@@ -348,7 +371,7 @@ initialOf idp = case idParserParser idp of
   (Epsilon _) -> base { cachedParserIsNullable = True }
   Empty -> base { cachedParserIsEmpty = True }
   (Reduction _ _ _) -> base
-  (Repetition _ init' init'f _ collected) ->
+  (Repetition _ init' init'f _ collected _) ->
     base 
     { cachedParserParseNull  = figure init' init'f collected
     , cachedParserIsNullable = True
@@ -371,56 +394,63 @@ initialOf idp = case idParserParser idp of
         convert = foldr init''f init''
         reversed :: [[a]]
         reversed = map id collected'
-      
-
 
 -- Parser Constructors
 term :: (Ord t) => (t -> Bool) -> Context (CachedParserRef t t)
 term = mkCached . Terminal
-termEq :: (Ord t)
-       => t 
-       -> Context (CachedParserRef t t)
+termEq
+  :: (Ord t)
+  => t 
+  -> Context (CachedParserRef t t)
 termEq = term . (==)
-(.~) :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
-     => CachedParserRef t a
-     -> CachedParserRef t b
-     -> Context (CachedParserRef t (a, b))
+(.~)
+  :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
+  => CachedParserRef t a
+  -> CachedParserRef t b
+  -> Context (CachedParserRef t (a, b))
 (.~) x y = mkCached $ Con x y
-(~>) :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
-     => CachedParserRef t a
-     -> Context (CachedParserRef t b)
-     -> Context (CachedParserRef t (a, b))
+(~>)
+  :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
+  => CachedParserRef t a
+  -> Context (CachedParserRef t b)
+  -> Context (CachedParserRef t (a, b))
 (~>) x ym = (x .~) =<< ym
-(<~) :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
-     => Context (CachedParserRef t a)
-     -> CachedParserRef t b
-     -> Context (CachedParserRef t (a, b))
+(<~)
+  :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
+  => Context (CachedParserRef t a)
+  -> CachedParserRef t b
+  -> Context (CachedParserRef t (a, b))
 (<~) xm y = (.~ y) =<< xm
-(<~>) :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
-      => Context (CachedParserRef t a)
-      -> Context (CachedParserRef t b)
-      -> Context (CachedParserRef t (a, b))
+(<~>)
+  :: (Show a, Ord a, Typeable a, Show b, Ord b, Typeable b)
+  => Context (CachedParserRef t a)
+  -> Context (CachedParserRef t b)
+  -> Context (CachedParserRef t (a, b))
 (<~>) xm ym = uncurry (.~) =<< liftM2 (,) xm ym
 
-(.|) :: (Ord a)
-     => CachedParserRef t a
-     -> CachedParserRef t a
-     -> Context (CachedParserRef t a)
+(.|)
+  :: (Ord a)
+  => CachedParserRef t a
+  -> CachedParserRef t a
+  -> Context (CachedParserRef t a)
 (.|) x y = mkCached $ Alt x y
-(|>) :: (Ord a)
-     => CachedParserRef t a
-     -> Context (CachedParserRef t a)
-     -> Context (CachedParserRef t a)
+(|>)
+  :: (Ord a)
+  => CachedParserRef t a
+  -> Context (CachedParserRef t a)
+  -> Context (CachedParserRef t a)
 (|>) x ym = (x .|) =<< ym
-(<|) :: (Ord a)
-     => Context (CachedParserRef t a)
-     -> CachedParserRef t a
-     -> Context (CachedParserRef t a)
+(<|)
+  :: (Ord a)
+  => Context (CachedParserRef t a)
+  -> CachedParserRef t a
+  -> Context (CachedParserRef t a)
 (<|) xm y = (.| y) =<< xm
-(<|>) :: (Ord a)
-      => Context (CachedParserRef t a)
-      -> Context (CachedParserRef t a)
-      -> Context (CachedParserRef t a)
+(<|>)
+  :: (Ord a)
+  => Context (CachedParserRef t a)
+  -> Context (CachedParserRef t a)
+  -> Context (CachedParserRef t a)
 (<|>) xm ym = uncurry (.|) =<< liftM2 (,) xm ym
 
 infixl 3 .~, ~>, <~, <~>
@@ -430,36 +460,42 @@ eps :: (Ord a) => [a] -> Context (CachedParserRef t a)
 eps = mkCached . Epsilon
 emp :: (Ord a) => Context (CachedParserRef t a)
 emp = mkCached Empty
-(==>|) :: (Show a, Ord a, Typeable a, Ord b)
-       => Context (CachedParserRef t a)
-       -> (a -> b)
-       -> Int
-       -> Context (CachedParserRef t b)
+(==>|)
+  :: (Show a, Ord a, Typeable a, Ord b)
+  => Context (CachedParserRef t a)
+  -> (a -> b)
+  -> Int
+  -> Context (CachedParserRef t b)
 (==>|) pm f fid =
   mkCached =<< return Reduction <*> pm <*> return f <*> return fid
-(==>) :: (Show a, Ord a, Typeable a, Ord b)
-      => Context (CachedParserRef t a)
-      -> (a -> b)
-      -> Context (CachedParserRef t b)
+(==>)
+  :: (Show a, Ord a, Typeable a, Ord b)
+  => Context (CachedParserRef t a)
+  -> (a -> b)
+  -> Context (CachedParserRef t b)
 (==>) pm f = (==>|) pm f =<< nextID
 
-rep :: (Ord a)
-    => CachedParserRef t a 
-    -> a 
-    -> (a -> a -> a) 
-    -> Context (CachedParserRef t a)
-rep p init' tallyf = do
+rep
+  :: (Ord a)
+  => CachedParserRef t a 
+  -> a 
+  -> (a -> a -> a) 
+  -> Context (CachedParserRef t a)
+rep p init' tallyf = mdo
   n <- nextID
-  repLoaded p init' tallyf n [[]]
+  result <- repLoaded p init' tallyf n [[]] result
+  return result
 
-repLoaded :: (Ord a)
-          => CachedParserRef t a
-          -> a
-          -> (a -> a -> a)
-          -> Int
-          -> [[a]]
-          -> Context (CachedParserRef t a)
-repLoaded p init' tallyf id' progress = mkCached $ Repetition p init' tallyf id' progress
+repLoaded
+  :: (Ord a)
+  => CachedParserRef t a
+  -> a
+  -> (a -> a -> a)
+  -> Int
+  -> [[a]]
+  -> CachedParserRef t a
+  -> Context (CachedParserRef t a)
+repLoaded p init' tallyf id' progress clean = mkCached $ Repetition p init' tallyf id' progress clean
 
 infix 2 ==>, ==>|
 
@@ -502,36 +538,38 @@ weed' ref = do
           pSec :: Parser t a2 <- lift $ readCachedParserRef pSec_r
           pFirNullable <- lift $ isNullable pFir_r
           case (pSec, pFirNullable) of
-            (Repetition _ _ _ testfid _, True) -- f' is :: a -> a -> a (same id as f above)
+            (Repetition _ _ _ testfid _ _, True) -- f' is :: a -> a -> a (same id as f above)
               | fid == testfid -> do
                 let
                   (Just pFir_rC) = cast pFir_r :: Maybe (CachedParserRef t a)
                   (Just pSecC)   = cast pSec   :: Maybe (Parser t a)
-                  (Repetition repP repInit repF repFid repProg) = pSecC
+                  (Repetition repP repInit repF repFid repProg repClean) = pSecC
                 pFirParseNull :: [a]   <- lift $ Set.toList <$> parseNull pFir_rC
                 pRepProgress  :: [[a]] <- return repProg
                 newProgress   :: [[a]] <- return $
                   [ x : xs | x <- pFirParseNull, xs <- pRepProgress ]
-                let finalP = repLoaded repP repInit repF repFid newProgress
+                let finalP = repLoaded repP repInit repF repFid newProgress repClean
                 lift $ writeCachedParserRef ref =<< readCachedParserRefCached =<< finalP
             _ -> return ()
         _ -> return ()
     handleSpecial _ = return ()
   
 -- Derivative
-der :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-    => t 
-    -> CachedParserRef t a 
-    -> Context (CachedParserRef t a)
+der
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => t 
+  -> CachedParserRef t a 
+  -> Context (CachedParserRef t a)
 der token ref = do
   d <- derInner token ref
   weed d
   return d
 
-derInner :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-         => t 
-         -> CachedParserRef t a 
-         -> Context (CachedParserRef t a)
+derInner
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => t 
+  -> CachedParserRef t a 
+  -> Context (CachedParserRef t a)
 derInner token pCachedRef = do
   -- if empty, just return empty
   pEmpty <- isEmpty pCachedRef
@@ -553,11 +591,12 @@ derInner token pCachedRef = do
           myDer <- derRaw token p pCachedRef
           return myDer
 
-derRaw :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-       => t 
-       -> Parser t a 
-       -> CachedParserRef t a 
-       -> Context (CachedParserRef t a)
+derRaw
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => t 
+  -> Parser t a 
+  -> CachedParserRef t a 
+  -> Context (CachedParserRef t a)
 derRaw token (Terminal t1test) _ 
   | t1test token = eps $ [token]
   | otherwise = emp
@@ -580,17 +619,21 @@ derRaw token (Alt lhs rhs) _ = do
 derRaw _ Empty _ = emp
 derRaw _ (Epsilon _) _ = emp
 derRaw token (Reduction parser f fid) _ = derInner token parser ==>| f $ fid
-derRaw token (Repetition parser init' tallyf' fid _) ref = do
-  myNullParses <- Set.toList <$> parseNull ref
-  ((eps myNullParses <~>
-    (derInner token parser <~> repLoaded parser init' tallyf' fid [[]]  ==>| uncurry tallyf' $ fid))
-      ==>| uncurry tallyf' $ fid)
+derRaw token (Repetition parser _ tallyf' fid progress clean) ref
+  | progress /= [[]] = do
+    myNullParses <- Set.toList <$> parseNull ref
+    ((eps myNullParses <~>
+      (derInner token parser <~ clean ==>| uncurry tallyf' $ fid))
+        ==>| uncurry tallyf' $ fid)
+  | otherwise = do
+    derInner token parser <~ ref ==>| uncurry tallyf' $ fid
 
 -- Parsing
-parse :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-     => CachedParserRef t a 
-     -> [t] 
-     -> Context [(a, [t])]
+parse
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => CachedParserRef t a 
+  -> [t] 
+  -> Context [(a, [t])]
 parse parserRef input = do
   parser <- readCachedParserRef parserRef
   case parser of
@@ -605,12 +648,13 @@ parse parserRef input = do
     (Reduction p f _) -> do
       innerParse <- parse p input
       return [(f a, rest) | (a, rest) <- innerParse]
-    (Repetition _ _ _ _ _) -> doDerivParse parserRef input
+    (Repetition _ _ _ _ _ _) -> doDerivParse parserRef input
 
-doDerivParse :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-             => CachedParserRef t a 
-             -> [t] 
-             -> Context [(a, [t])]
+doDerivParse
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => CachedParserRef t a 
+  -> [t] 
+  -> Context [(a, [t])]
 doDerivParse parserRef [] = do
   nullParses <- parseNull parserRef
   return [(a,[]) | a <- Set.toList nullParses]
@@ -620,10 +664,11 @@ doDerivParse parserRef (x:xs) = do
   return $ combineEven derivParse [(a,(x:xs)) | a <- parseFullOnEmpty]
 
 -- Parsing
-parseFull :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
-          => CachedParserRef t a 
-          -> [t] 
-          -> Context [a]
+parseFull
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
+  => CachedParserRef t a 
+  -> [t] 
+  -> Context [a]
 parseFull parserRef input = do
   parser <- readCachedParserRef parserRef
   case parser of
@@ -635,18 +680,19 @@ parseFull parserRef input = do
     (Reduction p f _) -> do
       innerParseFull <- parseFull p input
       return [f a | a <- innerParseFull]
-    (Repetition _ _ _ _ _) -> doDerivParseFull parserRef input
+    (Repetition _ _ _ _ _ _) -> doDerivParseFull parserRef input
 
-doDerivParseFull :: (Show a, Ord a, Typeable a, Ord t, Typeable t) 
-                 => CachedParserRef t a 
-                 -> [t] 
-                 -> Context [a]
+doDerivParseFull
+  :: (Show a, Ord a, Typeable a, Ord t, Typeable t) 
+  => CachedParserRef t a 
+  -> [t] 
+  -> Context [a]
 doDerivParseFull parserRef [] = liftM Set.toList $ parseNull parserRef
 doDerivParseFull parserRef (x:xs) = do
   derived <- der x parserRef
   parseFull derived xs
 
-combineEven :: [a] -> [a] -> [a]
+combineEven:: [a] -> [a] -> [a]
 combineEven (x:xs) ys = x:combineOdd xs ys
 combineEven xs (y:ys) = y:combineOdd xs ys
 combineEven _ _ = []
@@ -657,8 +703,10 @@ combineOdd (x:xs) ys = x:combineEven xs ys
 combineOdd _ _ = []
 
 -- A pretty print
-showRec :: (Show a) => CachedParserRef t a -> [Int] -> Int -> Context String
-showRec cachedRef seen depth = do
+showRec :: (Show a) => CachedParserRef t a -> Context String
+showRec r = fst <$> showRec' r [] 0
+showRec' :: (Show a) => CachedParserRef t a -> [Int] -> Int -> Context (String, [Int])
+showRec' cachedRef seen depth = do
   (CachedParser idp i n e pn _) <- readCachedParserRefCached cachedRef
 
   let initMsg = printf "[init: %s]" (show i)
@@ -677,9 +725,9 @@ showRec cachedRef seen depth = do
       depthBuffer = replicate depth ' '
       nextDepth = depth + 2
 
-  if g `elem` seen then return seenResult
+  if g `elem` seen then return (seenResult, seen)
     else case p of
-      (Terminal _) -> return $ printf "(Terminal %s)" cachMsg
+      (Terminal _) -> return (printf "(Terminal %s)" cachMsg, seen')
       (Con first second) -> do
         let resultFormat = concat [   "(Con %s\n"
                                   , "%s first:\n"
@@ -687,12 +735,13 @@ showRec cachedRef seen depth = do
                                   , "%s second:\n"
                                   , "%s  %s"
                                   ]
-        showFirst <- showRec first seen' nextDepth
-        showSecond <- showRec second seen' nextDepth
-        return $ printf resultFormat 
-                        cachMsg 
-                        depthBuffer depthBuffer showFirst 
-                        depthBuffer depthBuffer showSecond
+        (showFirst, seen1) <- showRec' first seen' nextDepth
+        (showSecond, seen2) <- showRec' second seen1 nextDepth
+        let result = printf resultFormat 
+                            cachMsg 
+                            depthBuffer depthBuffer showFirst 
+                            depthBuffer depthBuffer showSecond
+        return (result, seen2)
       (Alt lhs rhs) -> do
         let resultFormat = concat [   "(Alt %s\n"
                                   , "%s lhs:\n"
@@ -700,64 +749,64 @@ showRec cachedRef seen depth = do
                                   , "%s rhs:\n"
                                   , "%s  %s"
                                   ]
-        showLhs <- showRec lhs seen' nextDepth
-        showRhs <- showRec rhs seen' nextDepth
-        return $ printf resultFormat
-                        cachMsg
-                        depthBuffer depthBuffer showLhs
-                        depthBuffer depthBuffer showRhs
-      (Epsilon nullMatches) -> 
-        return $ printf "(Epsilon %s %s)" (show nullMatches) cachMsg
-      Empty -> return $ printf "(Empty %s)" cachMsg
+        (showLhs, seen1) <- showRec' lhs seen' nextDepth
+        (showRhs, seen2) <- showRec' rhs seen1 nextDepth
+        let result = printf resultFormat
+                            cachMsg
+                            depthBuffer depthBuffer showLhs
+                            depthBuffer depthBuffer showRhs
+        return (result, seen2)
+      (Epsilon nullMatches) -> do
+        let result = printf "(Epsilon %s %s)" (show nullMatches) cachMsg
+        return (result, seen')
+      Empty -> return (printf "(Empty %s)" cachMsg, seen')
       (Reduction rp _ fid) -> do
         let resultFormat = concat [   "(Reduction %s [fid: %s]\n"
                                   , "%s p:\n"
                                   , "%s  %s"
                                   ]
-        showRP <- showRec rp seen' nextDepth
-        return $ printf resultFormat
-                        cachMsg (show fid)
-                        depthBuffer depthBuffer showRP
-      (Repetition rp _ _ fid progress) -> do
+        (showRP, seen1) <- showRec' rp seen' nextDepth
+        let result = printf resultFormat
+                            cachMsg (show fid)
+                            depthBuffer depthBuffer showRP
+        return (result, seen1)
+      (Repetition rp _ _ fid progress clean) -> do
         let resultFormat = concat [   "(Repetion %s [fid: %s]\n"
-                                  , "%s [progress: %s]\n"
+                                  , "%s [progress: %s] [clean: %s]\n"
                                   , "%s p:\n"
                                   , "%s  %s"
                                   ]
-        showRP <- showRec rp seen' nextDepth
-        return $ printf resultFormat
-                        cachMsg (show fid)
-                        depthBuffer (show progress)
-                        depthBuffer depthBuffer showRP
+        (IDParser _ cid) <- readCachedParserRefID clean
+        (showRP, seen1) <- showRec' rp seen' nextDepth
+        let result = printf resultFormat
+                            cachMsg (show fid)
+                            depthBuffer (show progress) (show cid)
+                            depthBuffer depthBuffer showRP
+        return (result, seen1)
 
-parserSize :: CachedParserRef t a -> [Int] -> Context Int
-parserSize ref seen = flip parserSize' seen =<< readCachedParserRefID ref
+parserSize :: CachedParserRef t a -> Context Int
+parserSize = (fst <$>) . flip parserSize' []
 
-parserSize' :: IDParser t a -> [Int] -> Context Int
-parserSize' (IDParser (Terminal _) _) _ = return 1
-parserSize' (IDParser (Epsilon _) _) _ = return 1
-parserSize' (IDParser Empty _) _ = return 1
-parserSize' (IDParser (Con first second) id') seen
-  | id' `elem` seen = return 0
-  | otherwise       = (+ 1) <$> childrenSum
-    where
-      childrenSum = return (+) <*> parserSize first newSeen
-                               <*> parserSize second newSeen
-      newSeen = id':seen
-parserSize' (IDParser (Alt lhs rhs) id') seen
-  | id' `elem` seen = return 0
-  | otherwise       = (+ 1) <$> childrenSum
-    where
-      childrenSum = return (+) <*> parserSize lhs newSeen
-                               <*> parserSize rhs newSeen
-      newSeen = id':seen
-parserSize' (IDParser (Reduction p _ _) id') seen
-  | id' `elem` seen = return 0
-  | otherwise       = (+ 1) <$> parserSize p newSeen
-    where
-      newSeen = id':seen
-parserSize' (IDParser (Repetition p _ _ _ _) id') seen
-  | id' `elem` seen = return 0
-  | otherwise       = (+ 1) <$> parserSize p newSeen
-    where
-      newSeen = id':seen
+parserSize' :: CachedParserRef t a -> [Int] -> Context (Int, [Int])
+parserSize' ref seen = flip parserSize'' seen =<< readCachedParserRefID ref
+
+parserSize'' :: IDParser t a -> [Int] -> Context (Int, [Int])
+parserSize'' (IDParser _ id') seen
+  | id' `elem` seen = return (0, seen)
+parserSize'' (IDParser (Terminal _) id') seen = return (1, id':seen) 
+parserSize'' (IDParser (Epsilon _) id') seen = return (1, id':seen)
+parserSize'' (IDParser Empty id') seen = return (1, id':seen)
+parserSize'' (IDParser (Con first second) id') seen = do
+  (firstSize, newSeen) <- parserSize' first (id':seen)
+  (secondSize, newSeen1) <- parserSize' second newSeen
+  return (firstSize + secondSize + 1, newSeen1)
+parserSize'' (IDParser (Alt lhs rhs) id') seen = do
+  (lhsSize, newSeen) <- parserSize' lhs (id':seen)
+  (rhsSize, newSeen1) <- parserSize' rhs newSeen
+  return (lhsSize + rhsSize + 1, newSeen1)
+parserSize'' (IDParser (Reduction p _ _) id') seen = do
+  (pSize, newSeen) <- parserSize' p (id':seen)
+  return (pSize + 1, newSeen)
+parserSize'' (IDParser (Repetition p _ _ _ _ _) id') seen = do
+  (pSize, newSeen) <- parserSize' p (id':seen)
+  return (pSize + 1, newSeen)

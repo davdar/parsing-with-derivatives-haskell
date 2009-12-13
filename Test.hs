@@ -29,10 +29,7 @@ showTestP :: Context (CachedParserRef Char String) -> IO ()
 showTestP prefC = putStrLn $ unsafePerformIO $ runContext displayResult
   where 
     displayResult :: Context String
-    displayResult = showBase =<< prefC
-
-    showBase :: CachedParserRef Char String -> Context String
-    showBase p = showRec p [] 0
+    displayResult = showRec =<< prefC
 
 showTestPFor :: String -> IO ()
 showTestPFor = showTestP . testPFor
@@ -47,6 +44,6 @@ showParsePFor :: String -> IO ()
 showParsePFor = showParseP . parsePFor
 
 sizePFor :: String -> IO ()
-sizePFor s = putStrLn . show . unsafePerformIO . runContext $ flip parserSize [] =<< derived
+sizePFor s = putStrLn . show . unsafePerformIO . runContext $ parserSize =<< derived
   where
     derived = testPFor s
