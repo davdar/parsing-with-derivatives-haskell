@@ -663,7 +663,6 @@ doDerivParse parserRef (x:xs) = do
   derivParse <- der x parserRef >>= flip parse xs
   return $ combineEven derivParse [(a,(x:xs)) | a <- parseFullOnEmpty]
 
--- Parsing
 parseFull
   :: (Show a, Ord a, Typeable a, Ord t, Typeable t)
   => CachedParserRef t a 
