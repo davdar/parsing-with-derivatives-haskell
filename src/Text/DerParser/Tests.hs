@@ -1,8 +1,9 @@
 {-# LANGUAGE RecursiveDo, TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
-module DerParser.Tests where
 
-import SimpleTesting.Base
-import DerParser.Base
+module Text.DerParser.Tests where
+
+import Test.SimpleTesting
+import Text.DerParser
 import Control.Monad.Fix
 import Control.Monad.Trans
 import Control.Monad
@@ -19,15 +20,15 @@ testParse parser input expected =
   foldl (\t exp' -> t && exp' `elem` matches) True expected
     && (length expected) == (length matches)
   where
-    matches = map fst $ unsafePerformIO $ runContext $ parser >>= flip parse input
+    matches = map fst $ unsafePerformIO $ evalContext $ parser >>= flip parse input
 
 -- Match single 'x' 
 matchX :: Context (CachedParserRef Char Char)
 matchX = termEq 'x'
 
-matchXTests :: (MonadTestResult m, MonadIO m) => m ()
+matchXTests :: (MonadTest m, MonadIO m) => m ()
 matchXTests = do 
-  $(performTest' [| 
+  $(test [| 
     testParse matchX "x" ['x'] 
     |])
 
@@ -36,20 +37,20 @@ matchXL :: Context (CachedParserRef Char String)
 matchXL = mfix $ \xl -> 
   xl ~> matchX ==> uncurry (flip (:)) <|> matchX ==> (:[])
 
-matchXLTests :: (MonadTestResult m, MonadIO m) => m ()
+matchXLTests :: (MonadTest m, MonadIO m) => m ()
 matchXLTests = do 
-  $(performTest' [| testParse matchXL "xxxx" ["x", "xx", "xxx", "xxxx"] |])
-  $(performTest' [| testParse matchXL "" [] |])
+  $(test [| testParse matchXL "xxxx" ["x", "xx", "xxx", "xxxx"] |])
+  $(test [| testParse matchXL "" [] |])
 
 -- Match a list of zero or more 'x'
 matchXLEps :: Context (CachedParserRef Char String)
 matchXLEps = mfix $ \xle -> 
   xle ~> matchX ==> uncurry (flip (:)) <|> eps [""]
 
-matchXLEpsTests :: (MonadTestResult m, MonadIO m) => m ()
+matchXLEpsTests :: (MonadTest m, MonadIO m) => m ()
 matchXLEpsTests = do 
-  $(performTest' [| testParse matchXLEps "xxx" ["", "x", "xx", "xxx"] |])
-  $(performTest' [| testParse matchXLEps "" [""] |])
+  $(test [| testParse matchXLEps "xxx" ["", "x", "xx", "xxx"] |])
+  $(test [| testParse matchXLEps "" [""] |])
 
 -- Match a list of zero or more with pattern 'xyxy...' or 'yxyx...'
 matchXYL_matchYXL :: Context (CachedParserRef Char String, CachedParserRef Char String)
@@ -74,15 +75,15 @@ matchXYL = fst <$> matchXYL_matchYXL
 matchYXL :: Context (CachedParserRef Char String)
 matchYXL = snd <$> matchXYL_matchYXL
 
-matchXYL_matchYXLTests :: (MonadTestResult m, MonadIO m) => m ()
+matchXYL_matchYXLTests :: (MonadTest m, MonadIO m) => m ()
 matchXYL_matchYXLTests = do 
-  $(performTest' [| testParse matchXYL "xyxyxy" ["", "x", "xy", "xyx", "xyxy", "xyxyx", "xyxyxy"] |])
-  $(performTest' [| testParse matchXYL "yxyxyx" [""] |])
-  $(performTest' [| testParse matchXYL "" [""] |])
+  $(test [| testParse matchXYL "xyxyxy" ["", "x", "xy", "xyx", "xyxy", "xyxyx", "xyxyxy"] |])
+  $(test [| testParse matchXYL "yxyxyx" [""] |])
+  $(test [| testParse matchXYL "" [""] |])
 
-  $(performTest' [| testParse matchYXL "xyxyxy" [""] |])
-  $(performTest' [| testParse matchYXL "yxyxyx" ["", "y", "yx", "yxy", "yxyx", "yxyxy", "yxyxyx"] |])
-  $(performTest' [| testParse matchYXL "" [""] |])
+  $(test [| testParse matchYXL "xyxyxy" [""] |])
+  $(test [| testParse matchYXL "yxyxyx" ["", "y", "yx", "yxy", "yxyx", "yxyxy", "yxyxyx"] |])
+  $(test [| testParse matchYXL "" [""] |])
 
 -- A grammer for s-expressions
 sx_sxList :: Context (CachedParserRef Char String, CachedParserRef Char String)
@@ -94,9 +95,9 @@ sx_sxList = mdo
     termEq 's' 
       ==> (:[])
 
-  sxStar <- rep sx' [] (\s1 s2 -> s1 ++ s2)
+  -- sxStar <- rep sx' [] (\s1 s2 -> s1 ++ s2)
   -- FAST (linear for depth)
-  sxList' <- return sxStar
+  sxList' <- eps [""] <|> sx' .~ sxList' ==> uncurry (++)
   
   -- SLOW (exponential for depth)
   -- sxConsList <- sx' .~ sxStar <~> termEq '.' <~ sx' ==> uncurry3 (\s1 s2 '.' s3 -> s1 ++ s2 ++ s3)
@@ -112,7 +113,7 @@ sx_sxList = mdo
 
   where
     uncurry2 = uncurry . uncurry
-    uncurry3 = uncurry . uncurry2
+    -- uncurry3 = uncurry . uncurry2
 
 sx :: Context (CachedParserRef Char String)
 sx = fst <$> sx_sxList
@@ -120,12 +121,12 @@ sx = fst <$> sx_sxList
 sxList :: Context (CachedParserRef Char String)
 sxList = snd <$> sx_sxList
 
-sx_sxListTests :: (MonadTestResult m, MonadIO m) => m ()
+sx_sxListTests :: (MonadTest m, MonadIO m) => m ()
 sx_sxListTests = do 
-  $(performTest' [| testParse sx "s" ["s"] |])
-  $(performTest' [| testParse sx "(sss(ss)s)" ["(sss(ss)s)"] |])
-  $(performTest' [| testParse sxList "sss" ["", "s", "ss", "sss"] |])
-  $(performTest' [| testParse sxList "s(s)()" ["", "s", "s(s)", "s(s)()"] |])
+  $(test [| testParse sx "s" ["s"] |])
+  $(test [| testParse sx "(sss(ss)s)" ["(sss(ss)s)"] |])
+  $(test [| testParse sxList "sss" ["", "s", "ss", "sss"] |])
+  $(test [| testParse sxList "s(s)()" ["", "s", "s(s)", "s(s)()"] |])
 
 -- A nasty ambiguous grammar for things like "1+1+1"
 addExp :: Context (CachedParserRef Char String)
@@ -147,15 +148,16 @@ addExp = mdo
 
   where uncurry2 = uncurry . uncurry
 
-addExpTests :: (MonadTestResult m, MonadIO m) => m ()
+addExpTests :: (MonadTest m, MonadIO m) => m ()
 addExpTests = do 
-  $(performTest' [| testParse addExp "1+1" ["1", "{1+1}"] |])
-  $(performTest' [| testParse addExp "1+1+1" [ "1", "{1+1}"
+  $(test [| testParse addExp "1+1" ["1", "{1+1}"] |])
+  $(test [| testParse addExp "1+1+1" [ "1", "{1+1}"
                                              , "{1+{1+1}}"
                                              , "{{1+1}+1}" 
                                              ] |])
-  $(performTest' [| testParse addExp "x" [] |])
+  $(test [| testParse addExp "x" [] |])
 
+{-
 repFoo :: Context (CachedParserRef Char String)
 repFoo = mdo
   foo <- 
@@ -166,12 +168,13 @@ repFoo = mdo
 
   where uncurry2 = uncurry . uncurry
 
-repFooTests :: (MonadTestResult m, MonadIO m) => m ()
+repFooTests :: (MonadTest m, MonadIO m) => m ()
 repFooTests = do
-  $(performTest' [| testParse repFoo "foofoo" ["", "foo", "foofoo"] |])
-  $(performTest' [| testParse repFoo "foobar" ["", "foo" ] |])
+  $(test [| testParse repFoo "foofoo" ["", "foo", "foofoo"] |])
+  $(test [| testParse repFoo "foobar" ["", "foo" ] |])
+  -}
 
-derParserTests :: (MonadTestResult m, MonadIO m) => m ()
+derParserTests :: (MonadTest m, MonadIO m) => m ()
 derParserTests = do 
   matchXTests
   matchXLTests
@@ -179,4 +182,4 @@ derParserTests = do
   matchXYL_matchYXLTests
   sx_sxListTests
   addExpTests
-  repFooTests
+  -- repFooTests

@@ -1,21 +1,31 @@
 {-# LANGUAGE RankNTypes #-}
 
-module DerParser.Test 
-  ( module DerParser.Test
-  , module DerParser.Tests
-  , module DerParser.Base
+module Text.DerParser.Test
+  ( module Text.DerParser.Test
+  , module Text.DerParser.Tests
+  , module Text.DerParser
   ) where
 
-import SimpleTesting.Base
-import DerParser.Tests
-import DerParser.Base
+import Test.SimpleTesting
+import Text.DerParser.Tests
+import Text.DerParser
 import System.IO.Unsafe
 import Control.Applicative
+import System.IO
 
 main :: IO ()
 main = do
+{-
+  [input] <- lines <$> hGetContents stdin
+  result <-
+    evalContext $ do
+      p <- sxList
+      parseFull p input
+  putStrLn (show result)
+  -}
+
   putStr "DerParser Tests: "
-  putStr . (uncurry displayTestResults) =<< execTestResultT derParserTests
+  runTestingT derParserTests
 
 testPFor :: String -> Context (CachedParserRef Char String)
 testPFor s = foldl f init' s
@@ -26,7 +36,7 @@ testPFor s = foldl f init' s
     init' = sxList
 
 showTestP :: Context (CachedParserRef Char String) -> IO ()
-showTestP prefC = putStrLn $ unsafePerformIO $ runContext displayResult
+showTestP prefC = putStrLn $ unsafePerformIO $ evalContext displayResult
   where 
     displayResult :: Context String
     displayResult = showRec =<< prefC
@@ -38,12 +48,12 @@ parsePFor :: String -> Context [(String, [Char])]
 parsePFor s = flip parse s =<< sxList
 
 showParseP :: Context [(String, [Char])] -> IO ()
-showParseP pResult = putStrLn $ unsafePerformIO $ runContext $ show <$> pResult
+showParseP pResult = putStrLn $ unsafePerformIO $ evalContext $ show <$> pResult
 
 showParsePFor :: String -> IO ()
 showParsePFor = showParseP . parsePFor
 
 sizePFor :: String -> IO ()
-sizePFor s = putStrLn . show . unsafePerformIO . runContext $ parserSize =<< derived
+sizePFor s = putStrLn . show . unsafePerformIO . evalContext $ parserSize =<< derived
   where
     derived = testPFor s
