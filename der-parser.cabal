@@ -13,12 +13,12 @@ Library
     , containers == 0.2.0.1
     , template-haskell == 2.3.0.1
     , simple-testing
-  Exposed-Modules: Text.DerParser
+  Exposed-Modules: DerParser
   HS-Source-Dirs: src
   GHC-Options: -Wall
 
 Executable der-parser-test
-  Main-Is: Text/DerParser/Test.hs
+  Main-Is: DerParser/Test.hs
   HS-Source-Dirs: src
-  GHC-Options: -Wall -main-is Text.DerParser.Test.main
+  GHC-Options: -Wall -main-is DerParser.Test.main
 
