@@ -2,7 +2,7 @@
 
 -- Author: David Darais
 
-module Text.DerParser
+module DerParser
   ( Context, evalContext, CachedParserRef
   , term, termEq
   , (.~), (~>), (<~), (<~>)

@@ -1,9 +1,9 @@
 {-# LANGUAGE RecursiveDo, TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
 
-module Text.DerParser.Tests where
+module DerParser.Tests where
 
 import Test.SimpleTesting
-import Text.DerParser
+import DerParser
 import Control.Monad.Fix
 import Control.Monad.Trans
 import Control.Monad

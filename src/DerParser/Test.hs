@@ -1,14 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
 
-module Text.DerParser.Test
-  ( module Text.DerParser.Test
-  , module Text.DerParser.Tests
-  , module Text.DerParser
-  ) where
+module DerParser.Test where
 
 import Test.SimpleTesting
-import Text.DerParser.Tests
-import Text.DerParser
+import DerParser.Tests
+import DerParser
 import System.IO.Unsafe
 import Control.Applicative
 import System.IO
