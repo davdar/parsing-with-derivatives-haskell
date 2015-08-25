@@ -1,0 +1,12 @@
+name:                ghci-load
+version:             0.1.0.0
+license:             BSD3
+license-file:        LICENSE
+author:              David Darais
+maintainer:          david.darais@gmail.com
+build-type:          Simple
+cabal-version:       >=1.10
+
+library
+  build-depends:       base, directory, process, Cabal
+  default-language:    Haskell2010

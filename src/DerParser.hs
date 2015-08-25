@@ -20,7 +20,7 @@ import Control.Monad.State
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.List
-import Control.Applicative hiding ((<|>))
+-- import Control.Applicative hiding ((<|>))
 import Data.IORef
 import Data.Typeable
 import System.IO.Unsafe
@@ -46,7 +46,7 @@ evalIDT = ($ 0) . evalStateT . runIDHandlerT
 -- ChangeCell (Monad Transformer)
 newtype ChangeCellT m a =
   ChangeCellT { runChangeCellT :: StateT (Bool, [Int]) m a }
-  deriving (Monad, MonadTrans, MonadFix)
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadFix)
 
 flagChanged :: (Monad m) => ChangeCellT m ()
 flagChanged = ChangeCellT $ do
@@ -459,7 +459,7 @@ infix 2 ==>, ==>|
 -- computing a derivative.
 weed :: (Ord a, Typeable a) => CachedParserRef t a -> Context ()
 weed ref = do
-  execChangeContext $ weed' ref
+  void $ execChangeContext $ weed' ref
   return ()
 
 weed' :: forall a t. (Ord a, Typeable a) => CachedParserRef t a -> ChangeContext ()

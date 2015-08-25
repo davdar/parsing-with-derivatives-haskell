@@ -6,8 +6,6 @@ import Test.SimpleTesting
 import DerParser.Tests
 import DerParser
 import System.IO.Unsafe
-import Control.Applicative
-import System.IO
 
 main :: IO ()
 main = do
