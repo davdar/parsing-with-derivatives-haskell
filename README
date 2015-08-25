@@ -1,0 +1,11 @@
+This is the original Haskell implementation for "Parsing With Derivatives" by
+Might, Darais and Spiewak (ICFP 2011).
+
+The entire implementation is in src/DerParser.hs.
+
+See src/DerParser/Tests.hs for tests and example parsers.
+
+This implementation has not been maintained since early 2010, and is intended
+to serve as a reference only.
+
+-David Darais
